@@ -66,6 +66,16 @@
       .catch(() => {});
   }
 
+  // the server only looks for the code, so the rest of the post can be a joke
+  const VERIFY_POSTS = [
+    code => `A red candle just went straight up my... portfolio 🕯️🍑\nVerified trader: ${code}`,
+    code => `Got liquidated by a red candle. Literally. In the butt. 🕯️🍑\nTrader ID: ${code}`,
+    code => `My chair has a stop-loss and it's aimed at my butt 🪑🍑🕯️\n${code}`,
+    code => `Didn't sell the red candle. The red candle sold me. 🕯️🍑\nVerifying: ${code}`,
+    code => `Buy the dip, they said. The dip hit back. 🍑🕯️\nMy trader code: ${code}`,
+  ];
+  const verifyText = code => VERIFY_POSTS[Math.floor(Math.random() * VERIFY_POSTS.length)](code) + `\n${GAME_URL}`;
+
   let pending = null;   // { handle, nonce, code } while verifying
   $('verifyForm').addEventListener('submit', async e => {
     e.preventDefault();
@@ -75,7 +85,7 @@
       const r = await post('/api/claim', { step: 'code', handle });
       pending = { handle, nonce: r.nonce, code: r.code };
       $('verifyCode').textContent = r.code;
-      $('verifyPost').href = intent(`Verifying my trader for Red Candle 🕯️ ${r.code} ${GAME_URL}`);
+      $('verifyPost').href = intent(verifyText(r.code));
       $('verifySteps').hidden = false;
       $('verifyStart').hidden = true;
       $('handleNote').textContent = '';
