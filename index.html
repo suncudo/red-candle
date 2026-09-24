@@ -107,14 +107,34 @@
         <p class="spd-note" id="spdNote"></p>
         <button id="startBtn" type="button">Start trading</button>
         <button id="boardBtn1" type="button" class="spd" data-online hidden>Leaderboard</button>
-        <form class="handle-row" id="handleForm" data-online hidden>
-          <label for="handleInput">Your X handle, for the leaderboard</label>
-          <div class="speeds">
-            <input id="handleInput" type="text" placeholder="@yourname" maxlength="16" autocomplete="off" spellcheck="false">
-            <button id="handleSave" type="submit" class="spd">Save</button>
+        <div class="handle-row" data-online hidden>
+          <form class="handle-row" id="verifyForm">
+            <div id="verifyStart" class="handle-row">
+              <label for="handleInput">Your X handle, for the leaderboard</label>
+              <div class="speeds">
+                <input id="handleInput" type="text" placeholder="@yourname" maxlength="16" autocomplete="off" spellcheck="false">
+                <button type="submit" class="spd">Verify</button>
+              </div>
+              <p class="spd-note" id="handleNote">Optional. You'll post a short code on X to prove the handle is yours.</p>
+            </div>
+          </form>
+          <div id="verifySteps" class="handle-row" hidden>
+            <p class="spd-note">1. Post this code from your X account: <b id="verifyCode"></b></p>
+            <div class="speeds">
+              <a id="verifyPost" class="btn-x" href="https://twitter.com/intent/tweet" target="_blank" rel="noopener">Post on X</a>
+              <button id="verifyCancel" type="button" class="spd">Cancel</button>
+            </div>
+            <form class="handle-row" id="confirmForm">
+              <label for="tweetInput">2. Paste the link to your post</label>
+              <div class="speeds">
+                <input id="tweetInput" type="url" placeholder="https://x.com/you/status/…" autocomplete="off">
+                <button type="submit" class="spd">Confirm</button>
+              </div>
+              <p class="spd-note" id="tweetNote"></p>
+            </form>
           </div>
-          <p class="spd-note" id="handleNote">Optional. Your best runs will show up under this name.</p>
-        </form>
+          <p class="spd-note" id="verifyDone" hidden>Playing as <b id="verifiedAs"></b> ✓ <button id="verifyForget" type="button" class="spd mini">Use another</button></p>
+        </div>
       </div>
     </div>
 
@@ -155,9 +175,12 @@
   <div class="hint">On a phone? Tap the button or anywhere on the screen.</div>
 </div>
 
-<script>
+<script type="module">
+import * as E from './engine.js';
+
 (() => {
-  const W = 960, H = 540, MAX_HP = 5, OUCH = 1.3;
+  const W = 960, H = 540;
+  const { MAX_HP, OUCH, SPEEDS, LEVELS, levelDef } = E;
   const cv = document.getElementById('cv');
   const ctx = cv.getContext('2d');
   const DPR = Math.min(2, window.devicePixelRatio || 1);
@@ -265,88 +288,28 @@
   let st;
   const city = Array.from({ length: 26 }, () => ({ x: 64 + Math.random() * 162, y: 150 + Math.random() * 112, w: 3 + Math.random() * 5, a: 0.3 + Math.random() * 0.6 }));
 
-  // ---------- speed & levels ----------
-  // dur = seconds per candle, pRed = chance of a red candle,
-  // streak = max reds in a row, flip = chance a green candle dumps into red halfway,
-  // long = chance a red is a long one you survive by mashing, heavy = chance a red needs 3 taps
-  const SPEEDS = {
-    chill:  { mult: 1.35, note: 'Relaxed pace. Good for a first try.' },
-    normal: { mult: 1,    note: 'The intended pace.' },
-    degen:  { mult: 0.72, note: 'Fast from the very first candle.' },
-  };
-  const LEVELS = [
-    { name: 'Sideways',    note: 'Warm-up. Take your time.',                candles: 12, dur: 1.35, pRed: 0.3,  streak: 1, flip: 0,    long: 0,    heavy: 0 },
-    { name: 'Bull Run',    note: 'New: long reds. Mash Space to stay up!',  candles: 15, dur: 1.0,  pRed: 0.26, streak: 1, flip: 0,    long: 0.3,  heavy: 0 },
-    { name: 'Correction',  note: 'New: heavy reds. Sell them with 3 taps!', candles: 15, dur: 0.92, pRed: 0.45, streak: 2, flip: 0,    long: 0.2,  heavy: 0.3 },
-    { name: 'Pump & Dump', note: 'Green candles can flip red mid-way!',     candles: 15, dur: 0.88, pRed: 0.35, streak: 2, flip: 0.25, long: 0.18, heavy: 0.25 },
-    { name: 'Flash Crash', note: 'Red streaks, full speed.',                candles: 18, dur: 0.72, pRed: 0.48, streak: 3, flip: 0.15, long: 0.22, heavy: 0.3 },
-  ];
-  function levelDef(i) {
-    if (i < LEVELS.length) return LEVELS[i];
-    const n = i - LEVELS.length + 1;  // endless: keeps getting faster
-    return { name: 'Degen Hour ' + n, note: 'Endless mode. How long can you last?', candles: 20,
-             dur: Math.max(0.38, 0.7 - n * 0.05), pRed: 0.5, streak: 3, flip: 0.2, long: 0.25, heavy: 0.35 };
-  }
+  // ---------- game state (rules live in engine.js) ----------
   let speed = 'normal';
   try { if (SPEEDS[localStorage.getItem('redcandle-speed')]) speed = localStorage.getItem('redcandle-speed'); } catch (e) {}
   const bestKey = () => 'redcandle-best-' + speed;
   function loadBest() { try { best = +localStorage.getItem(bestKey()) || 0; } catch (e) { best = 0; } }
   loadBest();
 
+  // A run ticket from the server (seed + signature) makes the run count for the leaderboard;
+  // without one the run still plays, it just isn't ranked.
+  let ticket = null, acc = 0;
+
   function reset(mode) {
-    st = { mode: 'intro', hp: MAX_HP, score: 0, combo: 0, done: 0, candles: [], cur: null, price: 100,
-           ouch: 0, slam: 0, shake: 0, flash: 0, popups: [], time: 0, parts: [], rings: [], reds: 0, gold: 0,
-           lvl: 0, lvlDone: 0, banner: 0, stand: 0, spike: 0, longs: 0 };
-    for (let i = 0; i < 14; i++) { newCandle(); finishCandle(true); }
-    st.mode = mode;
-    if (mode === 'play') st.banner = 2.4;
-    newCandle();
+    ticket = mode === 'play' ? (window.RedCandleOnline?.takeTicket() || null) : null;
+    const seed = ticket ? ticket.seed : (Math.random() * 2 ** 32) >>> 0;
+    st = E.createGame({ seed, speed, mode, on: onEvent });
+    // visual-only state rides along on the same object
+    Object.assign(st, { slam: 0, shake: 0, flash: 0, gold: 0, popups: [], parts: [], rings: [] });
+    acc = 0;
     hud();
   }
 
-  function newCandle() {
-    const L = levelDef(st.lvl);
-    const run = [];
-    for (let i = st.candles.length - 1; i >= 0 && st.candles[i].red; i--) run.push(1);
-    let red = Math.random() < L.pRed;
-    if (run.length >= L.streak) red = false;
-    if (st.ouch > 0) red = false;
-    const flip = !red && st.mode === 'play' && st.ouch === 0 && Math.random() < L.flip;
-    // the first few red candles are slow so new players learn the move
-    if (red && st.mode === 'play') st.reds++;
-    // a long red: lasts ~3s and has to be survived by mashing Space
-    const long = red && st.mode === 'play' && st.reds > 3 && Math.random() < L.long;
-    if (long) st.longs++;
-    // a heavy red: needs 3 taps before it closes
-    const heavy = red && !long && st.mode === 'play' && st.reds > 3 && Math.random() < L.heavy;
-    if (heavy) st.heavies = (st.heavies || 0) + 1;
-    const tutorial = red && st.mode === 'play' && (st.reds <= 3 || (long && st.longs <= 2) || (heavy && st.heavies <= 2));
-    const o = st.price, size = o * (0.004 + Math.random() * 0.012) * (long ? 2.8 : heavy ? 1.8 : 1);
-    const c = red ? o - size : o + size;
-    let dur = L.dur * SPEEDS[speed].mult * (flip ? 1.4 : heavy ? 1.6 : 1);
-    if (long) dur = 3;
-    st.cur = { o, c, red, tutorial, flip, size, long, need: heavy ? 3 : 1, heavy,
-      h: Math.max(o, c) + Math.random() * size * 0.7,
-      l: Math.min(o, c) - Math.random() * size * 0.7,
-      vol: 0.3 + Math.random() * 0.7 + (red ? 0.3 : 0),
-      age: 0, dur: tutorial && !long ? Math.max(2, dur) : dur, pressed: false, result: null };
-  }
-
-  // a "pump & dump" candle: rises green, then dumps into red — now it must be sold
-  function flipCandle() {
-    const k = st.cur, p = k.age / k.dur, v = k.o + (k.c - k.o) * (1 - Math.pow(1 - p, 2));
-    k.flip = false; k.red = true; k.pressed = false; k.result = null;
-    k.h = Math.max(k.h, v); k.c = k.o - k.size * 1.3; k.l = k.c - Math.random() * k.size * 0.5; k.vol += 0.4;
-    popup('DUMP!', '#ff4a5c', 820, 110);
-  }
-
-  function levelUp() {
-    st.lvl++; st.lvlDone = 0; st.banner = 2.4;
-    if (st.hp < MAX_HP) { st.hp++; popup('+1 HP', '#2fd67b', 360, 150); }
-    for (let i = 0; i < 50; i++) burst('confetti', rnd(0, W), -10, 1, { a0: Math.PI * 0.4, a1: Math.PI * 0.6, s0: 60, s1: 200, z0: 5, z1: 9, g: 220, colors: ['#2fd67b', '#ffb347', '#ffd35c', '#e9e5d8'] });
-    tone(392, 784, 0.25, 'triangle', 0.1); setTimeout(() => tone(523, 1046, 0.35, 'triangle', 0.1), 180);
-    hud();
-  }
+  const press = () => E.press(st);
 
   // ---------- particles ----------
   const rnd = (a, b) => a + Math.random() * (b - a);
@@ -360,78 +323,66 @@
     }
   }
   function ring(x, y, color) { st.rings.push({ x, y, r: 10, life: 0.6, color }); }
-
-  function finishCandle(silent) {
-    const c = st.cur;
-    if (!silent && c.red && !c.pressed) { c.result = 'miss'; hit(); }
-    else if (!silent && c.long && c.result !== 'miss') {
-      c.result = 'cut'; st.combo++;
-      const gain = 50 * (st.lvl + 1);
-      st.score += gain;
-      popup('SURVIVED +' + gain, '#2fd67b', 480, 200);
-      burst('coin', 820, 170, 30, { a0: Math.PI * 1.05, a1: Math.PI * 1.95, s0: 260, s1: 600 });
-      ring(337, 360, '#2fd67b');
-      tone(523, 1046, 0.35, 'triangle', 0.1);
-      hud();
-    }
-    st.candles.push(c);
-    if (st.candles.length > 40) st.candles.shift();
-    st.price = c.c;
-    if (!silent) {
-      st.done++; st.lvlDone++;
-      if (st.lvlDone >= levelDef(st.lvl).candles && st.hp > 0) levelUp();
-    }
-  }
+  const confetti = () => { for (let i = 0; i < 40; i++) burst('confetti', rnd(0, W), -10, 1, { a0: Math.PI * 0.4, a1: Math.PI * 0.6, s0: 60, s1: 200, z0: 5, z1: 9, g: 220, colors: ['#2fd67b', '#ffb347', '#ffd35c', '#e9e5d8'] }); };
 
   function popup(text, color, x = 710, y = 60) { st.popups.push({ text, color, x, y, life: 1.1 }); }
 
-  function hit() {
-    st.hp--; st.combo = 0; st.ouch = OUCH; st.shake = reduced ? 0 : 0.5; st.flash = 0.5;
-    popup('−1 HP', '#ff4a5c', 360, 150);
-    burst('spark', 337, 366, 26, { a0: Math.PI * 1.1, a1: Math.PI * 1.9, s0: 200, s1: 520, z0: 3, z1: 6, colors: ['#ff4a5c', '#ffb347', '#ffd35c'] });
-    burst('dust', 337, 452, 14, { a0: Math.PI, a1: Math.PI * 2, s0: 40, s1: 160, z0: 8, z1: 16, colors: ['#4a5170'], g: -30 });
-    ring(337, 366, '#ff4a5c');
-    sfx.boing(); hud();
-  }
-
-  function press() {
-    if (st.mode !== 'play' || st.ouch > 0 || st.banner > 0) return;
-    const c = st.cur;
-    if (c.long) {
-      // every press pops the trader up out of the chair, away from the candle
-      if (c.result === 'miss') return;
-      c.pressed = true; st.stand = 1; st.slam = 0.2;
-      st.score += st.lvl + 1;
-      tone(300 + Math.random() * 120, 520, 0.06, 'square', 0.05);
-      hud(); return;
+  // what the player sees and hears when the engine reports something
+  function onEvent(type, d) {
+    switch (type) {
+      case 'hit':
+        st.shake = reduced ? 0 : 0.5; st.flash = 0.5;
+        popup('−1 HP', '#ff4a5c', 360, 150);
+        burst('spark', 337, 366, 26, { a0: Math.PI * 1.1, a1: Math.PI * 1.9, s0: 200, s1: 520, z0: 3, z1: 6, colors: ['#ff4a5c', '#ffb347', '#ffd35c'] });
+        burst('dust', 337, 452, 14, { a0: Math.PI, a1: Math.PI * 2, s0: 40, s1: 160, z0: 8, z1: 16, colors: ['#4a5170'], g: -30 });
+        ring(337, 366, '#ff4a5c');
+        sfx.boing();
+        break;
+      case 'survive':
+        popup('SURVIVED +' + d.gain, '#2fd67b', 480, 200);
+        burst('coin', 820, 170, 30, { a0: Math.PI * 1.05, a1: Math.PI * 1.95, s0: 260, s1: 600 });
+        ring(337, 360, '#2fd67b');
+        tone(523, 1046, 0.35, 'triangle', 0.1);
+        break;
+      case 'levelup':
+        if (d.healed) popup('+1 HP', '#2fd67b', 360, 150);
+        confetti();
+        tone(392, 784, 0.25, 'triangle', 0.1); setTimeout(() => tone(523, 1046, 0.35, 'triangle', 0.1), 180);
+        break;
+      case 'flip':
+        popup('DUMP!', '#ff4a5c', 820, 110);
+        break;
+      case 'mash':
+        st.slam = 0.2;
+        tone(300 + Math.random() * 120, 520, 0.06, 'square', 0.05);
+        break;
+      case 'wrong':
+        st.slam = 0.3; st.flash = Math.max(st.flash, 0.15);
+        popup('FALSE ALARM −' + d.pen, '#ff7d8a', 710 + rnd(-40, 40), 60);
+        sfx.wrong();
+        break;
+      case 'more':
+        st.slam = 0.2;
+        popup(d.need + ' MORE', '#ffb347', 820, 100);
+        tone(440, 660, 0.07, 'square', 0.06);
+        break;
+      case 'sell':
+        st.slam = 0.3;
+        popup('SOLD +' + d.gain, '#ffb347');
+        burst('coin', 820, 170, 18, { a0: Math.PI * 1.05, a1: Math.PI * 1.95, s0: 260, s1: 560 });
+        ring(820, 170, '#ffb347');
+        if (d.combo % 5 === 0) {
+          st.gold = 1.4;
+          popup('COMBO x' + d.combo + '!', '#2fd67b', 480, 230);
+          confetti();
+          tone(523, 1046, 0.35, 'triangle', 0.1);
+        }
+        sfx.sell();
+        break;
+      case 'over':
+        gameOver();
+        return;
     }
-    // every press on green, or on a red you already sold, costs points and the streak
-    if (!c.red || c.pressed) {
-      const pen = 5 * (st.lvl + 1);
-      st.score = Math.max(0, st.score - pen); st.combo = 0; st.slam = 0.3; st.flash = Math.max(st.flash, 0.15);
-      popup('FALSE ALARM −' + pen, '#ff7d8a', 710 + rnd(-40, 40), 60);
-      sfx.wrong(); hud(); return;
-    }
-    if (c.need > 1) {
-      c.need--; st.slam = 0.2;
-      popup(c.need + ' MORE', '#ffb347', 820, 100);
-      tone(440, 660, 0.07, 'square', 0.06);
-      return;
-    }
-    c.pressed = true;
-    st.combo++;
-    const gain = 10 * (st.lvl + 1) * (1 + Math.floor(st.combo / 5));
-    st.score += gain; c.result = 'cut'; st.slam = 0.3;
-    popup('SOLD +' + gain, '#ffb347');
-    burst('coin', 820, 170, 18, { a0: Math.PI * 1.05, a1: Math.PI * 1.95, s0: 260, s1: 560 });
-    ring(820, 170, '#ffb347');
-    if (st.combo % 5 === 0) {
-      st.gold = 1.4;
-      popup('COMBO x' + st.combo + '!', '#2fd67b', 480, 230);
-      for (let i = 0; i < 40; i++) burst('confetti', rnd(0, W), -10, 1, { a0: Math.PI * 0.4, a1: Math.PI * 0.6, s0: 60, s1: 200, z0: 5, z1: 9, g: 220, colors: ['#2fd67b', '#ffb347', '#ffd35c', '#e9e5d8'] });
-      tone(523, 1046, 0.35, 'triangle', 0.1);
-    }
-    sfx.sell();
     hud();
   }
 
@@ -444,7 +395,6 @@
   }
 
   function gameOver() {
-    st.mode = 'over';
     music.stop();
     const record = st.score > best;
     if (record) { best = st.score; try { localStorage.setItem(bestKey(), best); } catch (e) {} }
@@ -453,9 +403,10 @@
     $('finalLevel').textContent = (st.lvl + 1) + ' · ' + levelDef(st.lvl).name;
     $('bestLine').textContent = record ? 'New record!' : 'Best: ' + best;
     $('over').hidden = false; $('againBtn').focus(); hud();
-    // online.js listens for this to share the run and save it to the leaderboard
+    // online.js listens for this to share the run and send it to the server for ranking
     window.dispatchEvent(new CustomEvent('redcandle:over', { detail: {
-      score: st.score, level: st.lvl + 1, levelName: levelDef(st.lvl).name, candles: st.done, speed } }));
+      score: st.score, level: st.lvl + 1, levelName: levelDef(st.lvl).name, candles: st.done, speed,
+      run: ticket ? { ticket, speed, presses: st.presses, endTick: st.endTick } : null } }));
   }
 
   function start() {
@@ -467,7 +418,6 @@
 
   // ---------- update ----------
   function update(dt) {
-    st.time += dt;
     st.slam = Math.max(0, st.slam - dt);
     st.shake = Math.max(0, st.shake - dt);
     st.flash = Math.max(0, st.flash - dt);
@@ -478,30 +428,9 @@
     st.parts = st.parts.filter(p => p.life > 0 && p.y < H + 40);
     st.rings.forEach(r => { r.life -= dt; r.r += 260 * dt; });
     st.rings = st.rings.filter(r => r.life > 0);
-    if (st.ouch > 0) {
-      st.ouch = Math.max(0, st.ouch - dt);
-      if (st.ouch === 0 && st.hp <= 0) gameOver();
-    }
-    if (st.mode === 'over') return;
-    if (st.banner > 0) { st.banner = Math.max(0, st.banner - dt); return; }
-    st.cur.age += dt * (st.mode === 'play' ? 1 : 0.5);
-    if (st.cur.flip && st.cur.age >= st.cur.dur * 0.4) flipCandle();
-
-    // long red: a candle creeps out of the seat and lunges; standing up keeps you clear
-    st.stand = Math.max(0, st.stand - dt * 1.25);
-    const k = st.cur;
-    if (k.long && k.result !== 'miss' && st.ouch === 0) {
-      const ramp = Math.min(1, k.age / 1.0);
-      st.spike = ramp * 34 + Math.sin(st.time * 9) * 7 * ramp;
-      if (k.age > 0.7 && st.spike > standLift() + 4) { k.result = 'miss'; k.pressed = true; hit(); }
-    } else {
-      st.spike = Math.max(0, st.spike - dt * 120);
-    }
-    if (st.cur.age >= st.cur.dur) {
-      finishCandle(st.mode !== 'play');
-      hud();
-      newCandle();
-    }
+    // the rules advance in fixed ticks, however fast the screen refreshes
+    acc += dt;
+    while (acc >= E.TICK && st.mode !== 'over') { acc -= E.TICK; E.step(st); }
   }
 
   // ---------- drawing helpers ----------
@@ -512,9 +441,8 @@
   function rrect(x, y, w, h, r, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.roundRect(x, y, w, h, r); ctx.fill(); }
   function circle(x, y, r, color) { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); }
 
-  const danger = () => st.mode === 'play' && st.cur.red && st.ouch === 0 && st.banner === 0 &&(st.cur.long ? st.cur.result !== 'miss' : !st.cur.pressed);
-  // how far the trader's butt is off the seat, in px (eased so a press feels like a hop)
-  const standLift = () => (1 - Math.pow(1 - st.stand, 2)) * 55;
+  const danger = () => E.danger(st);
+  const standLift = () => E.standLift(st);
 
   // ---------- day / night ----------
   const DAY = 90; // real seconds for one full in-game day
@@ -974,9 +902,6 @@
   requestAnimationFrame(frame);
 })();
 </script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="config.js"></script>
 <script src="online.js"></script>
 </body>

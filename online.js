@@ -1,110 +1,122 @@
-// Online features: share on X, X handle, leaderboard.
-// Sharing always works; the handle and leaderboard need config.js filled in.
+// Online features: share on X, verified X handle, server-checked leaderboard.
+// Everything goes through the game's server (config.js → server); the browser never
+// writes scores itself. The server replays each run and computes the score.
 (() => {
   const $ = id => document.getElementById(id);
-  const GAME_URL = location.origin + location.pathname;
-  const HANDLE_KEY = 'redcandle-handle';
-  let last = null;
-  let handle = '';
-  try { handle = localStorage.getItem(HANDLE_KEY) || ''; } catch (e) {}
+  const cfg = window.RED_CANDLE_CONFIG || {};
+  const SERVER = (cfg.server || '').replace(/\/$/, '');
+  const GAME_URL = SERVER ? SERVER + '/' : location.origin + location.pathname;
+  const PLAYER_KEY = 'redcandle-player';   // { handle, token } once verified
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const intent = text => 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(text);
 
-  // ---------- share (no backend needed) ----------
-  // With shareBase set (the Vercel address), the link opens a page that gives
-  // X a picture card of this run; otherwise it links straight to the game.
-  const SHARE_BASE = ((window.RED_CANDLE_CONFIG || {}).shareBase || '').replace(/\/$/, '');
+  let player = null;
+  try { player = JSON.parse(localStorage.getItem(PLAYER_KEY)); } catch (e) {}
+  let last = null;
+
+  // ---------- share (works without the server) ----------
   function shareLink(r) {
     const text = `I made ${r.score} profit and reached level ${r.level} (${r.levelName}) in Red Candle 🕯️ Can you beat me?`;
     let url = GAME_URL;
-    if (SHARE_BASE) {
+    if (SERVER) {
       const q = new URLSearchParams({ score: r.score, level: r.level, speed: r.speed });
-      if (handle) q.set('h', handle);
-      url = `${SHARE_BASE}/s?${q}`;
+      if (player) q.set('h', player.handle);
+      url = `${SERVER}/s?${q}`;
     }
-    return 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(url);
+    return intent(text) + '&url=' + encodeURIComponent(url);
   }
   window.addEventListener('redcandle:over', e => {
     last = e.detail;
     $('shareX').href = shareLink(last);
   });
 
-  // ---------- handle + leaderboard (Firebase) ----------
-  const cfg = (window.RED_CANDLE_CONFIG || {}).firebase || {};
-  if (!cfg.apiKey || !cfg.projectId || !window.firebase) return;
+  if (!SERVER) return;
   document.querySelectorAll('[data-online]').forEach(el => { el.hidden = false; });
 
-  firebase.initializeApp(cfg);
-  const auth = firebase.auth(), db = firebase.firestore();
-  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const board = speed => db.collection('boards').doc(speed).collection('scores');
-
-  // Each browser gets a silent anonymous account. The first browser to save a
-  // handle owns it, so nobody else can post scores under that name.
-  let ready = null;
-  const signedIn = () => ready || (ready = auth.currentUser ? Promise.resolve(auth.currentUser)
-    : new Promise((resolve, reject) => {
-        const off = auth.onAuthStateChanged(u => { if (u) { off(); resolve(u); } });
-        auth.signInAnonymously().catch(err => { ready = null; off(); reject(err); });
-      }));
-
-  function showHandle() {
-    $('handleShow').textContent = handle ? '@' + handle : '—';
-    $('handleInput').value = handle ? '@' + handle : '';
+  async function api(path, options) {
+    const res = await fetch(SERVER + path, options);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'Server error');
+    return data;
   }
-  showHandle();
+  const post = (path, data) => api(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
 
-  $('handleForm').addEventListener('submit', async e => {
+  // ---------- run tickets: a server-issued seed, fetched ahead so starting is instant ----------
+  let ticket = null;
+  function fetchTicket() { api('/api/start').then(t => { ticket = t; }).catch(() => { ticket = null; }); }
+  fetchTicket();
+  window.RedCandleOnline = {
+    takeTicket() { const t = ticket; ticket = null; fetchTicket(); return t; },
+  };
+
+  // ---------- verified handle ----------
+  function showPlayer() {
+    $('handleShow').textContent = player ? '@' + player.handle + ' ✓' : '—';
+    $('verifyStart').hidden = !!player;
+    $('verifyDone').hidden = !player;
+    $('verifySteps').hidden = true;
+    if (player) $('verifiedAs').textContent = '@' + player.handle;
+  }
+  showPlayer();
+
+  // a saved token stops working if the handle was verified again elsewhere
+  if (player) {
+    api(`/api/claim?handle=${encodeURIComponent(player.handle)}&token=${encodeURIComponent(player.token)}`)
+      .then(r => { if (r.valid === false) { player = null; try { localStorage.removeItem(PLAYER_KEY); } catch (e) {} showPlayer(); } })
+      .catch(() => {});
+  }
+
+  let pending = null;   // { handle, nonce, code } while verifying
+  $('verifyForm').addEventListener('submit', async e => {
     e.preventDefault();
-    const h = $('handleInput').value.trim().replace(/^@/, '');
-    if (!/^[A-Za-z0-9_]{1,15}$/.test(h)) {
-      $('handleNote').textContent = 'Use your X handle: letters, digits and _ only, up to 15 characters.';
-      return;
-    }
-    $('handleNote').textContent = 'Saving…';
+    const handle = $('handleInput').value.trim().replace(/^@/, '');
+    $('handleNote').textContent = 'Getting your code…';
     try {
-      const u = await signedIn();
-      const ref = db.collection('handles').doc(h.toLowerCase());
-      const snap = await ref.get();
-      if (snap.exists && snap.data().uid !== u.uid) {
-        $('handleNote').textContent = `@${h} is already taken on this leaderboard. Pick another one.`;
-        return;
-      }
-      if (!snap.exists) await ref.set({ uid: u.uid, handle: h });
-      handle = snap.exists ? snap.data().handle : h;
-      try { localStorage.setItem(HANDLE_KEY, handle); } catch (e) {}
-      showHandle();
-      $('handleNote').textContent = `Saved. Your best runs will show up as @${handle}.`;
-    } catch (err) {
-      $('handleNote').textContent = 'Could not save the handle: ' + err.message;
-    }
+      const r = await post('/api/claim', { step: 'code', handle });
+      pending = { handle, nonce: r.nonce, code: r.code };
+      $('verifyCode').textContent = r.code;
+      $('verifyPost').href = intent(`Verifying my trader for Red Candle 🕯️ ${r.code} ${GAME_URL}`);
+      $('verifySteps').hidden = false;
+      $('verifyStart').hidden = true;
+      $('handleNote').textContent = '';
+      $('tweetNote').textContent = '';
+    } catch (err) { $('handleNote').textContent = err.message; }
   });
 
-  // keeps each handle's best run per speed; firestore.rules only accepts a better score
-  async function submit(r) {
-    $('lbStatus').textContent = 'Saving your score…';
+  $('confirmForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!pending) return;
+    $('tweetNote').textContent = 'Checking your post…';
     try {
-      await signedIn();
-      const ref = board(r.speed).doc(handle.toLowerCase());
-      const snap = await ref.get();
-      if (snap.exists && snap.data().score >= r.score) {
-        $('lbStatus').textContent = `Your best on ${r.speed} is still ${snap.data().score}.`;
-        return;
-      }
-      await ref.set({
-        handle, score: r.score, level: r.level, candles: r.candles,
-        at: firebase.firestore.FieldValue.serverTimestamp(),
-      });
-      $('lbStatus').textContent = `New best saved as @${handle}!`;
-    } catch (err) {
-      $('lbStatus').textContent = err.code === 'permission-denied'
-        ? 'Score not saved: it was rejected (less than 15s since your last save, or the numbers don’t add up).'
-        : 'Score not saved: ' + err.message;
-    }
-  }
+      const r = await post('/api/claim', { step: 'verify', handle: pending.handle, nonce: pending.nonce, tweetUrl: $('tweetInput').value });
+      player = { handle: r.handle, token: r.token };
+      try { localStorage.setItem(PLAYER_KEY, JSON.stringify(player)); } catch (e) {}
+      pending = null;
+      showPlayer();
+    } catch (err) { $('tweetNote').textContent = err.message; }
+  });
 
-  window.addEventListener('redcandle:over', () => {
-    if (last.score <= 0) $('lbStatus').textContent = 'Make a profit to get on the leaderboard.';
-    else if (handle) submit(last);
-    else $('lbStatus').textContent = 'Add your X handle in the Menu to get on the leaderboard.';
+  $('verifyCancel').addEventListener('click', () => { pending = null; showPlayer(); });
+  $('verifyForget').addEventListener('click', () => {
+    player = null;
+    try { localStorage.removeItem(PLAYER_KEY); } catch (e) {}
+    showPlayer();
+  });
+
+  // ---------- submitting a run ----------
+  window.addEventListener('redcandle:over', async () => {
+    const status = $('lbStatus');
+    if (!last.run) { status.textContent = "This run isn't ranked: the game couldn't reach the server when it started."; return; }
+    if (!player) { status.textContent = 'Verify your X handle in the Menu to get on the leaderboard.'; return; }
+    if (last.score <= 0) { status.textContent = 'Make a profit to get on the leaderboard.'; return; }
+    status.textContent = 'Checking your run…';
+    // presses travel as gaps between ticks, which keeps the request small
+    let prev = 0;
+    const gaps = last.run.presses.map(t => { const d = t - prev; prev = t; return d; });
+    try {
+      const r = await post('/api/submit', { handle: player.handle, token: player.token, ticket: last.run.ticket, speed: last.run.speed, presses: gaps, endTick: last.run.endTick });
+      status.textContent = r.best ? `Verified and saved: ${r.score} as @${player.handle}. New best!` : `Verified: ${r.score}. Your best on ${last.run.speed} is still ${r.bestScore}.`;
+    } catch (err) { status.textContent = 'Score not saved: ' + err.message; }
   });
 
   // ---------- leaderboard overlay ----------
@@ -114,15 +126,16 @@
     document.querySelectorAll('[data-board]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.board === speed)));
     $('boardList').innerHTML = '';
     $('boardNote').textContent = 'Loading…';
-    let docs;
-    try { docs = (await board(speed).orderBy('score', 'desc').limit(20).get()).docs; }
+    let rows;
+    try { rows = (await api('/api/board?speed=' + speed)).rows; }
     catch (err) { $('boardNote').textContent = 'Could not load the leaderboard: ' + err.message; return; }
     if (speed !== boardSpeed) return;
-    $('boardNote').textContent = docs.length ? `Top ${docs.length} · best run per player` : 'No scores yet. Be the first!';
-    $('boardList').innerHTML = docs.map((d, i) => {
-      const r = d.data(), h = esc(r.handle);
+    $('boardNote').textContent = rows.length ? `Top ${rows.length} · verified players · best run each` : 'No scores yet. Be the first!';
+    const me = player ? player.handle.toLowerCase() : null;
+    $('boardList').innerHTML = rows.map((r, i) => {
+      const h = esc(r.handle);
       return `
-      <li class="${handle && d.id === handle.toLowerCase() ? 'me' : ''}">
+      <li class="${r.id === me ? 'me' : ''}">
         <span class="rank">${i + 1}</span>
         <span class="who"><a href="https://x.com/${h}" target="_blank" rel="noopener">@${h}</a> <small>· lvl ${r.level}</small></span>
         <span class="pts">${r.score}</span>

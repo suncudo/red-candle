@@ -1,51 +1,13 @@
-// Red Candle leaderboard rules.
+// Red Candle: browsers get no direct access to the database at all.
+// The game's server (Vercel functions, Firebase Admin SDK) is the only reader and
+// writer: it replays every run to compute the score and verifies X handles itself.
 // Deploy with: firebase deploy --only firestore:rules
-//
-// handles/{handle}             who owns an X handle on this leaderboard (first come, first served)
-// boards/{speed}/scores/{handle}  that handle's best run for one speed
-//
-// Every browser signs in anonymously. A browser can claim a free handle, and only
-// the browser that owns a handle can post scores under it. Scores must be numbers
-// the game can actually produce, and an existing best can only be replaced by a
-// higher score, at most once every 15 seconds.
 
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /handles/{h} {
-      allow read: if true;
-      allow create: if request.auth != null
-        && h.matches('^[a-z0-9_]{1,15}$')
-        && request.resource.data.keys().hasOnly(['uid', 'handle'])
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.handle.lower() == h;
-      allow update, delete: if false;
-    }
-
-    match /boards/{speed}/scores/{h} {
-      allow read: if speed in ['chill', 'normal', 'degen'];
-
-      allow create: if validRun(speed, h);
-      allow update: if validRun(speed, h)
-        && request.resource.data.score > resource.data.score
-        && request.time > resource.data.at + duration.value(15, 's');
-      allow delete: if false;
-    }
-
-    function validRun(speed, h) {
-      let d = request.resource.data;
-      return request.auth != null
-        && speed in ['chill', 'normal', 'degen']
-        && get(/databases/$(database)/documents/handles/$(h)).data.uid == request.auth.uid
-        && d.keys().hasOnly(['handle', 'score', 'level', 'candles', 'at'])
-        && d.handle.lower() == h
-        && d.at == request.time
-        && d.score is int && d.level is int && d.candles is int
-        && d.score >= 0 && d.level >= 1 && d.candles >= 0
-        // a level takes at least 12 candles
-        && d.level * 12 <= d.candles + 12
-        // a candle is worth at most ~10 × level × combo bonus plus long-red bonuses
-        && d.score <= d.candles * d.level * (70 + 2 * d.candles);
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
