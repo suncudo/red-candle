@@ -1,5 +1,10 @@
 {
   "rewrites": [
     { "source": "/s", "destination": "/api/share" }
-  ]
+  ],
+  "functions": {
+    "api/og.js": {
+      "includeFiles": "node_modules/harfbuzzjs/**"
+    }
+  }
 }
