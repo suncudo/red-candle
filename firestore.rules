@@ -1,0 +1,42 @@
+// Red Candle leaderboard rules.
+// Paste into Firebase console → Firestore Database → Rules, then Publish.
+//
+// Layout: boards/{speed}/scores/{uid} holds one player's best run for that speed.
+// Anyone can read. A signed-in player can only write their own row, only under
+// their real X name and photo (taken from the sign-in token, so nobody can post
+// as someone else), only with numbers the game can actually produce, and an
+// existing row only if the new score is higher and 15s have passed.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /boards/{speed}/scores/{uid} {
+      allow read: if speed in ['chill', 'normal', 'degen'];
+
+      allow create: if validRun(speed, uid);
+      allow update: if validRun(speed, uid)
+        && request.resource.data.score > resource.data.score
+        && request.time > resource.data.at + duration.value(15, 's');
+      allow delete: if false;
+    }
+
+    function validRun(speed, uid) {
+      let d = request.resource.data;
+      let t = request.auth.token;
+      return request.auth != null
+        && request.auth.uid == uid
+        && speed in ['chill', 'normal', 'degen']
+        && d.keys().hasOnly(['name', 'photo', 'xid', 'score', 'level', 'candles', 'at'])
+        && d.name == t.get('name', 'player')
+        && d.photo == t.get('picture', null)
+        && d.xid == t.firebase.identities['twitter.com'][0]
+        && d.at == request.time
+        && d.score is int && d.level is int && d.candles is int
+        && d.score >= 0 && d.level >= 1 && d.candles >= 0
+        // a level takes at least 12 candles
+        && d.level * 12 <= d.candles + 12
+        // a candle is worth at most ~10 × level × combo bonus plus long-red bonuses
+        && d.score <= d.candles * d.level * (70 + 2 * d.candles);
+    }
+  }
+}

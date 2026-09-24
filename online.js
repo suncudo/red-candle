@@ -15,26 +15,27 @@
     $('shareX').href = shareLink(last);
   });
 
-  // ---------- sign in + leaderboard ----------
-  const cfg = window.RED_CANDLE_CONFIG || {};
-  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey || !window.supabase) return;
+  // ---------- sign in + leaderboard (Firebase) ----------
+  const cfg = (window.RED_CANDLE_CONFIG || {}).firebase || {};
+  if (!cfg.apiKey || !cfg.projectId || !window.firebase) return;
   document.querySelectorAll('[data-online]').forEach(el => { el.hidden = false; });
 
-  const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey);
+  firebase.initializeApp(cfg);
+  const auth = firebase.auth(), db = firebase.firestore();
   const PENDING = 'redcandle-pending';
   let user = null;
 
-  const meta = u => u?.user_metadata || {};
-  const handleOf = u => meta(u).user_name || meta(u).preferred_username || meta(u).name || 'player';
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // the player's X account id, used to link their name to their X profile
+  const xidOf = u => (u.providerData.find(p => p.providerId === 'twitter.com') || {}).uid || null;
+  const board = speed => db.collection('boards').doc(speed).collection('scores');
 
   function renderAuth() {
     const box = $('authBox');
     if (user) {
-      const avatar = meta(user).avatar_url;
-      box.innerHTML = (avatar ? `<img src="${esc(avatar)}" alt="">` : '') +
-        `<b>@${esc(handleOf(user))}</b><button type="button" class="spd mini" id="signOut">Sign out</button>`;
-      $('signOut').addEventListener('click', () => sb.auth.signOut());
+      box.innerHTML = (user.photoURL ? `<img src="${esc(user.photoURL)}" alt="">` : '') +
+        `<b>${esc(user.displayName || 'player')}</b><button type="button" class="spd mini" id="signOut">Sign out</button>`;
+      $('signOut').addEventListener('click', () => auth.signOut());
     } else {
       box.innerHTML = '<button type="button" class="mini" id="signInTop">Sign in with X</button>';
       $('signInTop').addEventListener('click', signIn);
@@ -43,17 +44,40 @@
   }
 
   function signIn() {
-    // remember the finished run so it can be saved after X sends the player back
+    // remember the finished run so it can be saved once sign-in completes
     if (last && last.score > 0) { try { localStorage.setItem(PENDING, JSON.stringify(last)); } catch (e) {} }
-    sb.auth.signInWithOAuth({ provider: cfg.authProvider || 'twitter', options: { redirectTo: GAME_URL } });
+    const provider = new firebase.auth.TwitterAuthProvider();
+    auth.signInWithPopup(provider).catch(err => {
+      if (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment') return auth.signInWithRedirect(provider);
+      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') $('lbStatus').textContent = 'Sign-in failed: ' + err.message;
+    });
   }
   $('lbSignIn').addEventListener('click', signIn);
+  auth.getRedirectResult().catch(err => { $('lbStatus').textContent = 'Sign-in failed: ' + err.message; });
 
+  // keeps each player's best run per speed; firestore.rules only accepts a better score
   async function submit(r) {
     $('lbStatus').textContent = 'Saving your score…';
-    const { error } = await sb.rpc('submit_score', { p_score: r.score, p_level: r.level, p_candles: r.candles, p_speed: r.speed });
-    $('lbStatus').textContent = error ? 'Score not saved: ' + error.message : 'Saved to the leaderboard.';
-    return !error;
+    try {
+      const ref = board(r.speed).doc(user.uid);
+      const snap = await ref.get();
+      if (snap.exists && snap.data().score >= r.score) {
+        $('lbStatus').textContent = `Your best on ${r.speed} is still ${snap.data().score}.`;
+        return true;
+      }
+      await ref.set({
+        name: user.displayName || 'player', photo: user.photoURL || null, xid: xidOf(user),
+        score: r.score, level: r.level, candles: r.candles,
+        at: firebase.firestore.FieldValue.serverTimestamp(),
+      });
+      $('lbStatus').textContent = 'New best saved to the leaderboard!';
+      return true;
+    } catch (err) {
+      $('lbStatus').textContent = err.code === 'permission-denied'
+        ? 'Score not saved: it was rejected (too soon after your last one, or not valid).'
+        : 'Score not saved: ' + err.message;
+      return false;
+    }
   }
 
   window.addEventListener('redcandle:over', () => {
@@ -70,18 +94,22 @@
     document.querySelectorAll('[data-board]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.board === speed)));
     $('boardList').innerHTML = '';
     $('boardNote').textContent = 'Loading…';
-    const { data, error } = await sb.rpc('get_leaderboard', { p_speed: speed });
+    let docs;
+    try { docs = (await board(speed).orderBy('score', 'desc').limit(20).get()).docs; }
+    catch (err) { $('boardNote').textContent = 'Could not load the leaderboard: ' + err.message; return; }
     if (speed !== boardSpeed) return;
-    if (error) { $('boardNote').textContent = 'Could not load the leaderboard: ' + error.message; return; }
-    $('boardNote').textContent = note || (data.length ? `Top ${data.length} · best run per player` : 'No scores yet. Be the first!');
-    const me = user ? handleOf(user) : null;
-    $('boardList').innerHTML = data.map((r, i) => `
-      <li class="${r.handle === me ? 'me' : ''}">
+    $('boardNote').textContent = note || (docs.length ? `Top ${docs.length} · best run per player` : 'No scores yet. Be the first!');
+    $('boardList').innerHTML = docs.map((d, i) => {
+      const r = d.data(), name = esc(r.name);
+      const who = r.xid ? `<a href="https://x.com/i/user/${esc(r.xid)}" target="_blank" rel="noopener">${name}</a>` : name;
+      return `
+      <li class="${user && d.id === user.uid ? 'me' : ''}">
         <span class="rank">${i + 1}</span>
-        ${r.avatar_url ? `<img src="${esc(r.avatar_url)}" alt="">` : '<span></span>'}
-        <span class="who">@${esc(r.handle)} <small>· lvl ${r.level}</small></span>
+        ${r.photo ? `<img src="${esc(r.photo)}" alt="">` : '<span></span>'}
+        <span class="who">${who} <small>· lvl ${r.level}</small></span>
         <span class="pts">${r.score}</span>
-      </li>`).join('');
+      </li>`;
+    }).join('');
   }
   function openBoard(note) {
     returnTo = ['intro', 'over'].find(id => !$(id).hidden) || null;
@@ -98,18 +126,15 @@
   document.querySelectorAll('[data-board]').forEach(b => b.addEventListener('click', () => loadBoard(b.dataset.board)));
 
   // ---------- session ----------
-  sb.auth.onAuthStateChange((_event, session) => {
-    user = session?.user || null;
+  auth.onAuthStateChanged(async u => {
+    user = u;
     renderAuth();
     if (!user) return;
     let pending = null;
     try { pending = JSON.parse(localStorage.getItem(PENDING)); localStorage.removeItem(PENDING); } catch (e) {}
     if (!pending) return;
     last = pending;
-    // Supabase advises not to await its own calls inside this callback
-    setTimeout(async () => {
-      const ok = await submit(pending);
-      openBoard(ok ? 'Your score was saved!' : $('lbStatus').textContent);
-    }, 0);
+    const ok = await submit(pending);
+    openBoard(ok ? $('lbStatus').textContent : null);
   });
 })();

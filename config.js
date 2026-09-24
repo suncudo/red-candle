@@ -1,12 +1,13 @@
-// Fill these in from Supabase → Project Settings → API to turn on
-// "Sign in with X" and the leaderboard. Leave them empty and the game
-// still works, just without the online features.
-// The anon key is meant to be public: the database rules in
-// supabase/schema.sql decide what it is allowed to do.
+// Paste your Firebase web app config here (Firebase console → Project settings →
+// Your apps → Web app → "SDK setup and configuration" → Config) to turn on
+// "Sign in with X" and the leaderboard. Leave it empty and the game still
+// works, just without the online features.
+// These values are meant to be public: firestore.rules decides what they can do.
 window.RED_CANDLE_CONFIG = {
-  supabaseUrl: '',
-  supabaseAnonKey: '',
-  // 'twitter' is Supabase's classic X login; use 'x' if you enabled
-  // the newer "X / Twitter (OAuth 2.0)" provider instead.
-  authProvider: 'twitter',
+  firebase: {
+    apiKey: '',
+    authDomain: '',
+    projectId: '',
+    appId: '',
+  },
 };

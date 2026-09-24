@@ -19,21 +19,24 @@ It's one static page (`index.html`) with no build step. Open it in a browser and
 |---|---|
 | `index.html` | The whole game |
 | `online.js` | Share on X, sign in with X, leaderboard |
-| `config.js` | Supabase keys (empty = the game runs without sign-in and leaderboard) |
-| `supabase/schema.sql` | Leaderboard table and the functions the game calls |
+| `config.js` | Firebase web config (empty = the game runs without sign-in and leaderboard) |
+| `firestore.rules` | Who may read and write the leaderboard |
 
 ## Turning on sign-in and the leaderboard
 
-1. **Supabase:** create a free project at [supabase.com](https://supabase.com). In **SQL Editor**, run `supabase/schema.sql`.
-2. **X app:** in the [X Developer Portal](https://developer.x.com), create an app and open **User authentication settings**:
-   - App type: *Web App*
-   - Callback URL: `https://<your-project>.supabase.co/auth/v1/callback`
+Uses Firebase's free Spark plan (no card needed).
+
+1. **Firebase project:** at [console.firebase.google.com](https://console.firebase.google.com) create a project (Google Analytics not needed).
+2. **Database:** Build → **Firestore Database** → Create database (production mode). Open the **Rules** tab, paste `firestore.rules`, click **Publish**.
+3. **X app:** in the [X Developer Portal](https://developer.x.com), create an app and open **User authentication settings**:
+   - App permissions: *Read*, type: *Web App*
+   - Callback URL: `https://<your-project-id>.firebaseapp.com/__/auth/handler`
    - Website URL: `https://suncudo.github.io/red-candle/`
    - Copy the **API Key** and **API Key Secret** (Keys and tokens tab).
-3. **Connect them:** in Supabase → **Authentication → Providers → Twitter**, enable it and paste the key and secret.
-   In **Authentication → URL Configuration**, set Site URL and add a Redirect URL: `https://suncudo.github.io/red-candle/`
-4. **Game config:** put the Project URL and `anon` public key (Supabase → Project Settings → API) into `config.js`, commit and push.
+4. **Sign-in:** Firebase → Build → **Authentication** → Get started → Sign-in method → **Twitter**: enable, paste the key and secret, save.
+   Then Authentication → Settings → **Authorized domains** → add `suncudo.github.io`.
+5. **Game config:** Project settings → Your apps → add a **Web app** (no hosting), copy `apiKey`, `authDomain`, `projectId`, `appId` into `config.js`, commit and push.
 
-The `anon` key is meant to be public. The database rules in `schema.sql` only allow reading the leaderboard and saving your own score through `submit_score`.
+The web config is meant to be public. `firestore.rules` only lets anyone read the leaderboard and lets signed-in players save their own best run under their real X name.
 
-**About cheating:** the game runs in the player's browser, so a determined player could send a fake score. The server rejects impossible numbers, ties every score to a real X account and rate-limits submissions, but it can't fully prevent cheating.
+**About cheating:** the game runs in the player's browser, so a determined player could send a fake score. The rules reject impossible numbers, tie every score to a real X account and limit how often a player can update, but they can't fully prevent cheating.
