@@ -58,11 +58,12 @@
   .speeds > .btn-x { flex: 1; }
   .btn-x { font-family: var(--pixel); font-size: 12px; border-radius: 4px; padding: 14px 18px; text-align: center; text-decoration: none; background: var(--text); color: #0b0d15; }
   .btn-x:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
-  .mini { font-size: 9px; padding: 8px 10px; }
-  .auth { display: inline-flex; align-items: center; gap: 8px; }
-  .auth img, .board img { width: 22px; height: 22px; border-radius: 50%; }
+  .handle-row { display: grid; gap: 8px; margin: 0; }
+  .handle-row label { font-size: 12px; color: var(--muted); letter-spacing: .04em; }
+  .handle-row input { flex: 2; min-width: 0; font: 14px var(--mono); color: var(--text); background: var(--ground); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; }
+  .handle-row input:focus-visible { outline: 2px solid var(--amber); outline-offset: 1px; }
   .board { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow-y: auto; font-size: 13px; }
-  .board li { display: grid; grid-template-columns: 26px 22px 1fr auto; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
+  .board li { display: grid; grid-template-columns: 26px 1fr auto; gap: 8px; align-items: center; font-variant-numeric: tabular-nums; }
   .board .rank { color: var(--muted); text-align: right; }
   .board .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .board .pts { color: var(--amber); font-weight: 700; }
@@ -82,7 +83,7 @@
     <span><span class="label">Level</span><b id="lvl">1 · Sideways</b></span>
     <span class="spacer"></span>
     <span><span class="label">Best</span><b id="best">0</b></span>
-    <span class="auth" id="authBox" data-online hidden></span>
+    <span id="handleBox" data-online hidden><span class="label">Player</span><b id="handleShow">—</b></span>
   </div>
 
   <div class="stage">
@@ -102,6 +103,14 @@
         <p class="spd-note" id="spdNote"></p>
         <button id="startBtn" type="button">Start trading</button>
         <button id="boardBtn1" type="button" class="spd" data-online hidden>Leaderboard</button>
+        <form class="handle-row" id="handleForm" data-online hidden>
+          <label for="handleInput">Your X handle, for the leaderboard</label>
+          <div class="speeds">
+            <input id="handleInput" type="text" placeholder="@yourname" maxlength="16" autocomplete="off" spellcheck="false">
+            <button id="handleSave" type="submit" class="spd">Save</button>
+          </div>
+          <p class="spd-note" id="handleNote">Optional. Your best runs will show up under this name.</p>
+        </form>
       </div>
     </div>
 
@@ -117,9 +126,8 @@
           <a id="shareX" class="btn-x" href="https://twitter.com/intent/tweet" target="_blank" rel="noopener">Share on X</a>
         </div>
         <div class="speeds">
-          <button id="lbSignIn" type="button" class="spd" hidden>Sign in with X</button>
           <button id="boardBtn2" type="button" class="spd" data-online hidden>Leaderboard</button>
-          <button id="menuBtn" type="button" class="spd">Change speed</button>
+          <button id="menuBtn" type="button" class="spd">Menu</button>
         </div>
       </div>
     </div>
@@ -854,6 +862,7 @@
   // ---------- input ----------
   window.addEventListener('keydown', e => {
     if (e.code !== 'Space' && e.code !== 'Enter') return;
+    if (e.target.tagName === 'INPUT') return;
     if (!$('board').hidden) return;
     e.preventDefault();
     if (e.repeat) return;

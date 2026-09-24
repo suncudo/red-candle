@@ -1,9 +1,12 @@
-// Online features: share on X, sign in with X, leaderboard.
-// Sharing always works; sign-in and the leaderboard need config.js filled in.
+// Online features: share on X, X handle, leaderboard.
+// Sharing always works; the handle and leaderboard need config.js filled in.
 (() => {
   const $ = id => document.getElementById(id);
   const GAME_URL = location.origin + location.pathname;
+  const HANDLE_KEY = 'redcandle-handle';
   let last = null;
+  let handle = '';
+  try { handle = localStorage.getItem(HANDLE_KEY) || ''; } catch (e) {}
 
   // ---------- share (no backend needed) ----------
   function shareLink(r) {
@@ -15,81 +18,89 @@
     $('shareX').href = shareLink(last);
   });
 
-  // ---------- sign in + leaderboard (Firebase) ----------
+  // ---------- handle + leaderboard (Firebase) ----------
   const cfg = (window.RED_CANDLE_CONFIG || {}).firebase || {};
   if (!cfg.apiKey || !cfg.projectId || !window.firebase) return;
   document.querySelectorAll('[data-online]').forEach(el => { el.hidden = false; });
 
   firebase.initializeApp(cfg);
   const auth = firebase.auth(), db = firebase.firestore();
-  const PENDING = 'redcandle-pending';
-  let user = null;
-
   const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  // the player's X account id, used to link their name to their X profile
-  const xidOf = u => (u.providerData.find(p => p.providerId === 'twitter.com') || {}).uid || null;
   const board = speed => db.collection('boards').doc(speed).collection('scores');
 
-  function renderAuth() {
-    const box = $('authBox');
-    if (user) {
-      box.innerHTML = (user.photoURL ? `<img src="${esc(user.photoURL)}" alt="">` : '') +
-        `<b>${esc(user.displayName || 'player')}</b><button type="button" class="spd mini" id="signOut">Sign out</button>`;
-      $('signOut').addEventListener('click', () => auth.signOut());
-    } else {
-      box.innerHTML = '<button type="button" class="mini" id="signInTop">Sign in with X</button>';
-      $('signInTop').addEventListener('click', signIn);
+  // Each browser gets a silent anonymous account. The first browser to save a
+  // handle owns it, so nobody else can post scores under that name.
+  let ready = null;
+  const signedIn = () => ready || (ready = auth.currentUser ? Promise.resolve(auth.currentUser)
+    : new Promise((resolve, reject) => {
+        const off = auth.onAuthStateChanged(u => { if (u) { off(); resolve(u); } });
+        auth.signInAnonymously().catch(err => { ready = null; off(); reject(err); });
+      }));
+
+  function showHandle() {
+    $('handleShow').textContent = handle ? '@' + handle : '—';
+    $('handleInput').value = handle ? '@' + handle : '';
+  }
+  showHandle();
+
+  $('handleForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const h = $('handleInput').value.trim().replace(/^@/, '');
+    if (!/^[A-Za-z0-9_]{1,15}$/.test(h)) {
+      $('handleNote').textContent = 'Use your X handle: letters, digits and _ only, up to 15 characters.';
+      return;
     }
-    $('lbSignIn').hidden = !!user || !last || last.score <= 0;
-  }
+    $('handleNote').textContent = 'Saving…';
+    try {
+      const u = await signedIn();
+      const ref = db.collection('handles').doc(h.toLowerCase());
+      const snap = await ref.get();
+      if (snap.exists && snap.data().uid !== u.uid) {
+        $('handleNote').textContent = `@${h} is already taken on this leaderboard. Pick another one.`;
+        return;
+      }
+      if (!snap.exists) await ref.set({ uid: u.uid, handle: h });
+      handle = snap.exists ? snap.data().handle : h;
+      try { localStorage.setItem(HANDLE_KEY, handle); } catch (e) {}
+      showHandle();
+      $('handleNote').textContent = `Saved. Your best runs will show up as @${handle}.`;
+    } catch (err) {
+      $('handleNote').textContent = 'Could not save the handle: ' + err.message;
+    }
+  });
 
-  function signIn() {
-    // remember the finished run so it can be saved once sign-in completes
-    if (last && last.score > 0) { try { localStorage.setItem(PENDING, JSON.stringify(last)); } catch (e) {} }
-    const provider = new firebase.auth.TwitterAuthProvider();
-    auth.signInWithPopup(provider).catch(err => {
-      if (err.code === 'auth/popup-blocked' || err.code === 'auth/operation-not-supported-in-this-environment') return auth.signInWithRedirect(provider);
-      if (err.code !== 'auth/popup-closed-by-user' && err.code !== 'auth/cancelled-popup-request') $('lbStatus').textContent = 'Sign-in failed: ' + err.message;
-    });
-  }
-  $('lbSignIn').addEventListener('click', signIn);
-  auth.getRedirectResult().catch(err => { $('lbStatus').textContent = 'Sign-in failed: ' + err.message; });
-
-  // keeps each player's best run per speed; firestore.rules only accepts a better score
+  // keeps each handle's best run per speed; firestore.rules only accepts a better score
   async function submit(r) {
     $('lbStatus').textContent = 'Saving your score…';
     try {
-      const ref = board(r.speed).doc(user.uid);
+      await signedIn();
+      const ref = board(r.speed).doc(handle.toLowerCase());
       const snap = await ref.get();
       if (snap.exists && snap.data().score >= r.score) {
         $('lbStatus').textContent = `Your best on ${r.speed} is still ${snap.data().score}.`;
-        return true;
+        return;
       }
       await ref.set({
-        name: user.displayName || 'player', photo: user.photoURL || null, xid: xidOf(user),
-        score: r.score, level: r.level, candles: r.candles,
+        handle, score: r.score, level: r.level, candles: r.candles,
         at: firebase.firestore.FieldValue.serverTimestamp(),
       });
-      $('lbStatus').textContent = 'New best saved to the leaderboard!';
-      return true;
+      $('lbStatus').textContent = `New best saved as @${handle}!`;
     } catch (err) {
       $('lbStatus').textContent = err.code === 'permission-denied'
-        ? 'Score not saved: it was rejected (too soon after your last one, or not valid).'
+        ? 'Score not saved: it was rejected (too soon after your last one, or this handle belongs to another browser).'
         : 'Score not saved: ' + err.message;
-      return false;
     }
   }
 
   window.addEventListener('redcandle:over', () => {
     if (last.score <= 0) $('lbStatus').textContent = 'Make a profit to get on the leaderboard.';
-    else if (user) submit(last);
-    else $('lbStatus').textContent = 'Sign in with X to put this score on the leaderboard.';
-    renderAuth();
+    else if (handle) submit(last);
+    else $('lbStatus').textContent = 'Add your X handle in the Menu to get on the leaderboard.';
   });
 
   // ---------- leaderboard overlay ----------
   let boardSpeed = 'normal', returnTo = null;
-  async function loadBoard(speed, note) {
+  async function loadBoard(speed) {
     boardSpeed = speed;
     document.querySelectorAll('[data-board]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.board === speed)));
     $('boardList').innerHTML = '';
@@ -98,43 +109,28 @@
     try { docs = (await board(speed).orderBy('score', 'desc').limit(20).get()).docs; }
     catch (err) { $('boardNote').textContent = 'Could not load the leaderboard: ' + err.message; return; }
     if (speed !== boardSpeed) return;
-    $('boardNote').textContent = note || (docs.length ? `Top ${docs.length} · best run per player` : 'No scores yet. Be the first!');
+    $('boardNote').textContent = docs.length ? `Top ${docs.length} · best run per player` : 'No scores yet. Be the first!';
     $('boardList').innerHTML = docs.map((d, i) => {
-      const r = d.data(), name = esc(r.name);
-      const who = r.xid ? `<a href="https://x.com/i/user/${esc(r.xid)}" target="_blank" rel="noopener">${name}</a>` : name;
+      const r = d.data(), h = esc(r.handle);
       return `
-      <li class="${user && d.id === user.uid ? 'me' : ''}">
+      <li class="${handle && d.id === handle.toLowerCase() ? 'me' : ''}">
         <span class="rank">${i + 1}</span>
-        ${r.photo ? `<img src="${esc(r.photo)}" alt="">` : '<span></span>'}
-        <span class="who">${who} <small>· lvl ${r.level}</small></span>
+        <span class="who"><a href="https://x.com/${h}" target="_blank" rel="noopener">@${h}</a> <small>· lvl ${r.level}</small></span>
         <span class="pts">${r.score}</span>
       </li>`;
     }).join('');
   }
-  function openBoard(note) {
+  function openBoard() {
     returnTo = ['intro', 'over'].find(id => !$(id).hidden) || null;
     if (returnTo) $(returnTo).hidden = true;
     $('board').hidden = false;
     let speed = 'normal';
     try { speed = localStorage.getItem('redcandle-speed') || 'normal'; } catch (e) {}
-    loadBoard(last ? last.speed : speed, note);
+    loadBoard(last ? last.speed : speed);
     $('boardClose').focus();
   }
-  $('boardBtn1').addEventListener('click', () => openBoard());
-  $('boardBtn2').addEventListener('click', () => openBoard());
+  $('boardBtn1').addEventListener('click', openBoard);
+  $('boardBtn2').addEventListener('click', openBoard);
   $('boardClose').addEventListener('click', () => { $('board').hidden = true; if (returnTo) $(returnTo).hidden = false; });
   document.querySelectorAll('[data-board]').forEach(b => b.addEventListener('click', () => loadBoard(b.dataset.board)));
-
-  // ---------- session ----------
-  auth.onAuthStateChanged(async u => {
-    user = u;
-    renderAuth();
-    if (!user) return;
-    let pending = null;
-    try { pending = JSON.parse(localStorage.getItem(PENDING)); localStorage.removeItem(PENDING); } catch (e) {}
-    if (!pending) return;
-    last = pending;
-    const ok = await submit(pending);
-    openBoard(ok ? $('lbStatus').textContent : null);
-  });
 })();
