@@ -13,7 +13,7 @@ import { firestore, sign, verify, randomId, json, preflight, body, HANDLE } from
 export const OPTIONS = preflight;
 
 const codeFor = (h, nonce) => 'RC-' + sign(`claim:${h}:${nonce}`).replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase();
-const TWEET = /^https:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})\/status\/(\d{5,25})(?:[/?#].*)?$/;
+const TWEET = /^https:\/\/(?:www\.|mobile\.)?(?:x|twitter)\.com\/([A-Za-z0-9_]{1,15})\/status\/(\d{1,25})(?:[/?#].*)?$/;
 
 export async function POST(request) {
   const fail = (error, status = 400) => json(request, { error }, status);
