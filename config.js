@@ -6,7 +6,7 @@
 window.RED_CANDLE_CONFIG = {
   // Vercel address of this game (e.g. 'https://red-candle.vercel.app'). When set,
   // "Share on X" posts a picture card of the run; empty = plain link to the game.
-  shareBase: '',
+  shareBase: 'https://red-candle-lime.vercel.app',
   firebase: {
     apiKey: 'AIzaSyCFSjW_k1DEAc407zovE1_pCEmpbAPZ-ow',
     authDomain: 'red-candle-game.firebaseapp.com',

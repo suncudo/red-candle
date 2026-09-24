@@ -2,7 +2,7 @@
 
 A trading reflex game. While candles are green, chill. When a red one appears, hit **Space** (or tap) to sell before it closes, or your chair kicks you in the butt.
 
-**Play:** https://suncudo.github.io/red-candle/
+**Play:** https://red-candle-lime.vercel.app/ (mirror: https://suncudo.github.io/red-candle/)
 
 - 5 market phases (Sideways → Bull Run → Correction → Pump & Dump → Flash Crash), then endless "Degen Hour"
 - Heavy reds need 3 taps, long reds need mashing, green candles can dump into red mid-way
