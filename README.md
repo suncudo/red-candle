@@ -9,36 +9,48 @@ A trading reflex game. While candles are green, chill. When a red one appears, h
 - Every wrong press costs points and resets your streak
 - Chill / Normal / Degen speeds, each with its own record
 - Day and night cycle outside the window
-- Add your X handle to climb the leaderboard, then share your run on X
+- Verify your X handle, climb a server-checked leaderboard, share your run on X
+- Handmade chiptune soundtrack that speeds up with the market
 
-It's one static page (`index.html`) with no build step. Open it in a browser and play.
+The game is a static page plus a few small server functions on Vercel, no build step.
 
 ## Files
 
 | File | What it is |
 |---|---|
-| `index.html` | The whole game |
-| `online.js` | Share on X, X handle, leaderboard |
-| `config.js` | Firebase web config (empty = the game runs without the leaderboard) |
-| `firestore.rules` | Who may read and write the leaderboard |
-| `firebase.json`, `.firebaserc` | Lets `firebase deploy --only firestore:rules` find the rules and project |
+|  | The page: drawing, sound, input |
+|  | The game rules, deterministic, shared by the page and the server |
+|  | Share on X, handle verification, leaderboard |
+|  | Address of the game's server (empty = offline, no leaderboard) |
+|  | Signed run ticket (the seed that decides the candles) |
+|  | Replays a run and stores the score it computes |
+|  | Top 20 per speed |
+|  | Proves an X handle belongs to the player |
+| ,  | Picture card for runs shared on X |
+|  | Browsers get no database access at all |
 
-## How the leaderboard works
+## How the leaderboard stays honest
 
-Runs on Firebase's free Spark plan (no card needed). No X API is used: X's API is pay-per-use, so sign-in with X would cost money per player.
+- **Scores are computed by the server.** The page records only the run ticket and when Space was pressed. The server replays the run with the same  and stores whatever that produces, so a typed-in score is impossible. Each ticket counts once, a run can't be longer than the time since its ticket was issued, and reactions faster than a human (under 0.1s) are rejected.
+- **Handles are proven, not claimed.** The player posts a short code from their X account and pastes the link. The server reads the post through X's free public embed endpoint (no API key, no cost) and checks the author and the code. The code comes from a secret only the player's browser holds, so copying someone's post doesn't help.
+- **Only the server touches the database** (Firebase Admin SDK, key in the  env var on Vercel).
+- What it can't stop: a bot that actually plays the game well. That's true of every browser game with a leaderboard.
 
-- Each browser signs in to Firebase anonymously, in the background.
-- A player types their X handle. The first browser to save a handle owns it; nobody else can post scores under it.
-- Each handle keeps its best run per speed. It can only be replaced by a higher score, at most once every 15 seconds.
-- **Share on X** just opens a pre-filled post, so it needs no API either.
+## Setup
 
-## Setting it up in your own Firebase project
+1. Firebase project with Firestore; deploy the rules: [1m[37m===[39m Deploying to 'red-candle-game'...[22m
 
-1. Create a project at [console.firebase.google.com](https://console.firebase.google.com).
-2. Build → **Authentication** → Get started → Sign-in method → **Anonymous** → Enable.
-3. Build → **Firestore Database** → Create database, then deploy the rules: `firebase deploy --only firestore:rules` (or paste `firestore.rules` into the Rules tab).
-4. Project settings → Your apps → add a **Web app**, and copy `apiKey`, `authDomain`, `projectId`, `appId` into `config.js`.
+[36m[1mi [22m[39m deploying [1mfirestore[22m
+[36m[1mi  firestore:[22m[39m ensuring required API [1mfirestore.googleapis.com[22m is enabled...
+[36m[1mi  firestore:[22m[39m ensuring required API [1mfirestore.googleapis.com[22m is enabled...
+[36m[1mi  cloud.firestore:[22m[39m checking [1mfirestore.rules[22m for compilation errors...
+[32m[1m+  cloud.firestore:[22m[39m rules file [1mfirestore.rules[22m compiled successfully
+[36m[1mi  firestore:[22m[39m latest version of [1mfirestore.rules[22m already up to date, skipping upload...
+[36m[1mi [22m[39m [1m[36mfirestore: [39m[22mdeploying indexes...
+[32m[1m+  firestore:[22m[39m released rules [1mfirestore.rules[22m to [1mcloud.firestore[22m
 
-The web config is meant to be public. `firestore.rules` decides what it can do.
+[32m[1m+ [22m[39m [1m[4mDeploy complete![24m[22m
 
-**About cheating:** the game runs in the player's browser, so a determined player could send a fake score, or grab someone's handle before they do. The rules reject impossible numbers and lock each handle to one browser, but they can't fully prevent cheating.
+[1mProject Console:[22m https://console.firebase.google.com/project/red-candle-game/overview.
+2. Firebase → Project settings → Service accounts → Generate new private key; put the whole JSON into the  env var on Vercel and redeploy.
+3. Put the Vercel address into  and the allowed origins list in .
