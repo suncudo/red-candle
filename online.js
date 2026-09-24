@@ -9,9 +9,18 @@
   try { handle = localStorage.getItem(HANDLE_KEY) || ''; } catch (e) {}
 
   // ---------- share (no backend needed) ----------
+  // With shareBase set (the Vercel address), the link opens a page that gives
+  // X a picture card of this run; otherwise it links straight to the game.
+  const SHARE_BASE = ((window.RED_CANDLE_CONFIG || {}).shareBase || '').replace(/\/$/, '');
   function shareLink(r) {
     const text = `I made ${r.score} profit and reached level ${r.level} (${r.levelName}) in Red Candle 🕯️ Can you beat me?`;
-    return 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(GAME_URL);
+    let url = GAME_URL;
+    if (SHARE_BASE) {
+      const q = new URLSearchParams({ score: r.score, level: r.level, speed: r.speed });
+      if (handle) q.set('h', handle);
+      url = `${SHARE_BASE}/s?${q}`;
+    }
+    return 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(text) + '&url=' + encodeURIComponent(url);
   }
   window.addEventListener('redcandle:over', e => {
     last = e.detail;

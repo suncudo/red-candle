@@ -4,6 +4,9 @@
 // works, just without the online features.
 // These values are meant to be public: firestore.rules decides what they can do.
 window.RED_CANDLE_CONFIG = {
+  // Vercel address of this game (e.g. 'https://red-candle.vercel.app'). When set,
+  // "Share on X" posts a picture card of the run; empty = plain link to the game.
+  shareBase: '',
   firebase: {
     apiKey: 'AIzaSyCFSjW_k1DEAc407zovE1_pCEmpbAPZ-ow',
     authDomain: 'red-candle-game.firebaseapp.com',
