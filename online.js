@@ -87,7 +87,7 @@
       $('lbStatus').textContent = `New best saved as @${handle}!`;
     } catch (err) {
       $('lbStatus').textContent = err.code === 'permission-denied'
-        ? 'Score not saved: it was rejected (too soon after your last one, or this handle belongs to another browser).'
+        ? 'Score not saved: it was rejected (less than 15s since your last save, or the numbers don’t add up).'
         : 'Score not saved: ' + err.message;
     }
   }
