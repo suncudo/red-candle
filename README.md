@@ -9,7 +9,7 @@ A trading reflex game. While candles are green, chill. When a red one appears, h
 - Every wrong press costs points and resets your streak
 - Chill / Normal / Degen speeds, each with its own record
 - Day and night cycle outside the window
-- Share your run on X, sign in with X and climb the leaderboard
+- Add your X handle to climb the leaderboard, then share your run on X
 
 It's one static page (`index.html`) with no build step. Open it in a browser and play.
 
@@ -18,25 +18,27 @@ It's one static page (`index.html`) with no build step. Open it in a browser and
 | File | What it is |
 |---|---|
 | `index.html` | The whole game |
-| `online.js` | Share on X, sign in with X, leaderboard |
-| `config.js` | Firebase web config (empty = the game runs without sign-in and leaderboard) |
+| `online.js` | Share on X, X handle, leaderboard |
+| `config.js` | Firebase web config (empty = the game runs without the leaderboard) |
 | `firestore.rules` | Who may read and write the leaderboard |
+| `firebase.json`, `.firebaserc` | Lets `firebase deploy --only firestore:rules` find the rules and project |
 
-## Turning on sign-in and the leaderboard
+## How the leaderboard works
 
-Uses Firebase's free Spark plan (no card needed).
+Runs on Firebase's free Spark plan (no card needed). No X API is used: X's API is pay-per-use, so sign-in with X would cost money per player.
 
-1. **Firebase project:** at [console.firebase.google.com](https://console.firebase.google.com) create a project (Google Analytics not needed).
-2. **Database:** Build → **Firestore Database** → Create database (production mode). Open the **Rules** tab, paste `firestore.rules`, click **Publish**.
-3. **X app:** in the [X Developer Portal](https://developer.x.com), create an app and open **User authentication settings**:
-   - App permissions: *Read*, type: *Web App*
-   - Callback URL: `https://<your-project-id>.firebaseapp.com/__/auth/handler`
-   - Website URL: `https://suncudo.github.io/red-candle/`
-   - Copy the **API Key** and **API Key Secret** (Keys and tokens tab).
-4. **Sign-in:** Firebase → Build → **Authentication** → Get started → Sign-in method → **Twitter**: enable, paste the key and secret, save.
-   Then Authentication → Settings → **Authorized domains** → add `suncudo.github.io`.
-5. **Game config:** Project settings → Your apps → add a **Web app** (no hosting), copy `apiKey`, `authDomain`, `projectId`, `appId` into `config.js`, commit and push.
+- Each browser signs in to Firebase anonymously, in the background.
+- A player types their X handle. The first browser to save a handle owns it; nobody else can post scores under it.
+- Each handle keeps its best run per speed. It can only be replaced by a higher score, at most once every 15 seconds.
+- **Share on X** just opens a pre-filled post, so it needs no API either.
 
-The web config is meant to be public. `firestore.rules` only lets anyone read the leaderboard and lets signed-in players save their own best run under their real X name.
+## Setting it up in your own Firebase project
 
-**About cheating:** the game runs in the player's browser, so a determined player could send a fake score. The rules reject impossible numbers, tie every score to a real X account and limit how often a player can update, but they can't fully prevent cheating.
+1. Create a project at [console.firebase.google.com](https://console.firebase.google.com).
+2. Build → **Authentication** → Get started → Sign-in method → **Anonymous** → Enable.
+3. Build → **Firestore Database** → Create database, then deploy the rules: `firebase deploy --only firestore:rules` (or paste `firestore.rules` into the Rules tab).
+4. Project settings → Your apps → add a **Web app**, and copy `apiKey`, `authDomain`, `projectId`, `appId` into `config.js`.
+
+The web config is meant to be public. `firestore.rules` decides what it can do.
+
+**About cheating:** the game runs in the player's browser, so a determined player could send a fake score, or grab someone's handle before they do. The rules reject impossible numbers and lock each handle to one browser, but they can't fully prevent cheating.
