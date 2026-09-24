@@ -60,6 +60,7 @@
   .speeds > .btn-x { flex: 1; }
   .btn-x { font-family: var(--pixel); font-size: 12px; border-radius: 4px; padding: 14px 18px; text-align: center; text-decoration: none; background: var(--text); color: #0b0d15; }
   .btn-x:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+  .mini { font-size: 9px; padding: 8px 10px; }
   .handle-row { display: grid; gap: 8px; margin: 0; }
   .handle-row label { font-size: 12px; color: var(--muted); letter-spacing: .04em; }
   .handle-row input { flex: 2; min-width: 0; font: 14px var(--mono); color: var(--text); background: var(--ground); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; }
@@ -85,6 +86,7 @@
     <span><span class="label">Level</span><b id="lvl">1 · Sideways</b></span>
     <span class="spacer"></span>
     <span><span class="label">Best</span><b id="best">0</b></span>
+    <button type="button" id="musicBtn" class="spd mini" aria-pressed="true" title="Toggle music (M)">♪ Music on</button>
     <span id="handleBox" data-online hidden><span class="label">Player</span><b id="handleShow">—</b></span>
   </div>
 
@@ -181,6 +183,83 @@
     wrong: () => tone(220, 140, 0.18, 'sawtooth', 0.08),
     boing: () => { tone(90, 900, 0.28, 'square', 0.09); setTimeout(() => tone(500, 120, 0.3, 'triangle', 0.1), 260); },
   };
+
+  // ---------- music: a small chiptune loop built from oscillators, no audio files ----------
+  // Am – F – C – G, one chord per bar of sixteen 16th notes. Tempo rises with the level;
+  // while a red candle is live the arpeggio jumps an octave and the hi-hats double up.
+  const music = (() => {
+    const midi = m => 440 * Math.pow(2, (m - 69) / 12);
+    const CHORDS = [[57, 60, 64], [53, 57, 60], [60, 64, 67], [55, 59, 62]];
+    const ARP = [0, 1, 2, 1, 0, 1, 2, 3, 0, 1, 2, 1, 2, 1, 0, 3];  // 3 = root an octave up
+    let on = true, playing = false, timer = null, master = null, noise = null, step = 0, next = 0;
+    try { on = localStorage.getItem('redcandle-music') !== 'off'; } catch (e) {}
+
+    function voice(type, freq, t, dur, vol) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t);
+      g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      o.connect(g).connect(master); o.start(t); o.stop(t + dur + 0.02);
+    }
+    function kick(t) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.12);
+      g.gain.setValueAtTime(0.3, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+      o.connect(g).connect(master); o.start(t); o.stop(t + 0.16);
+    }
+    function hat(t) {
+      const s = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+      s.buffer = noise; f.type = 'highpass'; f.frequency.value = 7000;
+      g.gain.setValueAtTime(0.05, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+      s.connect(f).connect(g).connect(master); s.start(t); s.stop(t + 0.05);
+    }
+    function schedule() {
+      const sixteenth = 60 / Math.min(168, 104 + st.lvl * 8) / 4, hot = danger();
+      // after the tab was in the background, skip ahead instead of playing a burst of old notes
+      if (next < ac.currentTime - 0.2) next = ac.currentTime + 0.05;
+      while (next < ac.currentTime + 0.12) {
+        const chord = CHORDS[Math.floor(step / 16) % 4], i = step % 16, a = ARP[i];
+        voice('triangle', midi((a === 3 ? chord[0] + 12 : chord[a]) + (hot ? 12 : 0)), next, sixteenth * 0.9, 0.05);
+        if (i % 2 === 0) voice('square', midi(chord[0] - 24), next, sixteenth * 1.6, 0.04);
+        if (i % 8 === 0) kick(next);
+        if (i % 4 === 2 || (hot && i % 2 === 1)) hat(next);
+        next += sixteenth; step++;
+      }
+    }
+    function start() {
+      if (!on || playing) return;
+      try {
+        ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+        if (ac.state === 'suspended') ac.resume();
+        if (!master) {
+          master = ac.createGain(); master.connect(ac.destination);
+          noise = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.05), ac.sampleRate);
+          const d = noise.getChannelData(0);
+          for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        }
+        master.gain.cancelScheduledValues(ac.currentTime);
+        master.gain.setValueAtTime(0.5, ac.currentTime);
+        step = 0; next = ac.currentTime + 0.05; playing = true;
+        timer = setInterval(schedule, 25);
+      } catch (e) {}
+    }
+    function stop() {
+      if (!playing) return;
+      playing = false; clearInterval(timer);
+      master.gain.setTargetAtTime(0, ac.currentTime, 0.15);
+    }
+    function label() {
+      const b = $('musicBtn');
+      b.textContent = on ? '♪ Music on' : '♪ Music off';
+      b.setAttribute('aria-pressed', String(on));
+    }
+    function toggle() {
+      on = !on;
+      try { localStorage.setItem('redcandle-music', on ? 'on' : 'off'); } catch (e) {}
+      label();
+      if (!on) stop(); else if (st.mode === 'play') start();
+    }
+    return { start, stop, toggle, label };
+  })();
 
   // ---------- state ----------
   let st;
@@ -366,6 +445,7 @@
 
   function gameOver() {
     st.mode = 'over';
+    music.stop();
     const record = st.score > best;
     if (record) { best = st.score; try { localStorage.setItem(bestKey(), best); } catch (e) {} }
     $('finalScore').textContent = st.score;
@@ -380,6 +460,7 @@
 
   function start() {
     reset('play');
+    music.start();
     $('intro').hidden = true; $('over').hidden = true;
     cv.focus?.();
   }
@@ -863,14 +944,17 @@
 
   // ---------- input ----------
   window.addEventListener('keydown', e => {
-    if (e.code !== 'Space' && e.code !== 'Enter') return;
     if (e.target.tagName === 'INPUT') return;
+    if (e.code === 'KeyM') { music.toggle(); return; }
+    if (e.code !== 'Space' && e.code !== 'Enter') return;
     if (!$('board').hidden) return;
     e.preventDefault();
     if (e.repeat) return;
     if (st.mode === 'play') { if (e.code === 'Space') press(); }
     else start();
   });
+  $('musicBtn').addEventListener('click', () => music.toggle());
+  music.label();
   $('startBtn').addEventListener('click', start);
   $('againBtn').addEventListener('click', start);
   function setSpeed(s) {
